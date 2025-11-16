@@ -34,26 +34,36 @@ class AcedPayloadEnv(gym.Env):
 
     def __init__(
         self,
-        n_agents: int = 3,
-        arena_size: float = 25.0,
+        n_agents: int = 5,
+        arena_size: float = 20.0,
         goal_radius: float = 5.0,
+        goal_border_offset: float = 0.1,
         max_steps: int = 200,
         event_driven: bool = False,
-        cooldown_time: int = 3,
-        contact_radius: float = 3.0,
+        cooldown_time: int = 0,
+        contact_radius: float = 2.0,
         placement_radius: float = 0.9,
-        max_agent_speed: float = 2.0,
+        max_agent_speed: float = 5.0,
+        comm_dropout_prob: float = 0.0,
+        comm_delay_steps: int = 0,
+        sensor_dropout_prob: float = 0.0,
     ):
         super().__init__()
         self.n_agents = n_agents
         self.arena_size = arena_size
-        self.goal_radius = float(goal_radius)
+        self.goal_radius = goal_radius
+        self.goal_border_offset = goal_border_offset
         self.max_steps = max_steps
         self.event_driven = event_driven
         self.cooldown_time = cooldown_time
         self.contact_radius = contact_radius
         self.placement_radius = placement_radius
         self.max_agent_speed = max_agent_speed
+
+        # Robustness factors
+        self.comm_dropout_prob = comm_dropout_prob
+        self.comm_delay_steps = comm_delay_steps
+        self.sensor_dropout_prob = sensor_dropout_prob
 
         # observation: [vx, vy, dist_payload, dist_goal, msg_vx, msg_vy,
         #               msg_dist_payload, msg_dist_goal, msg_age, cooldown]
@@ -96,14 +106,14 @@ class AcedPayloadEnv(gym.Env):
         self._rng = np.random.default_rng(seed)
         random.seed(seed)
 
-    def _place_goal(self):
+    def _place_goal(self, border_offset: float = 0.1):
         """Place goal randomly on arena border."""
         side = self._rng.integers(0, 4)
         match side:
             case 0:  # left
                 self.goal = np.array(
                     [
-                        self._rng.uniform(0.0, self.arena_size * 0.2),
+                        self._rng.uniform(0.0, self.arena_size * border_offset),
                         self._rng.uniform(0.0, self.arena_size),
                     ],
                     dtype=float,
@@ -111,7 +121,9 @@ class AcedPayloadEnv(gym.Env):
             case 1:  # right
                 self.goal = np.array(
                     [
-                        self._rng.uniform(self.arena_size * 0.8, self.arena_size),
+                        self._rng.uniform(
+                            self.arena_size * (1 - border_offset), self.arena_size
+                        ),
                         self._rng.uniform(0.0, self.arena_size),
                     ],
                     dtype=float,
@@ -120,7 +132,7 @@ class AcedPayloadEnv(gym.Env):
                 self.goal = np.array(
                     [
                         self._rng.uniform(0.0, self.arena_size),
-                        self._rng.uniform(0.0, self.arena_size * 0.2),
+                        self._rng.uniform(0.0, self.arena_size * border_offset),
                     ],
                     dtype=float,
                 )
@@ -128,7 +140,9 @@ class AcedPayloadEnv(gym.Env):
                 self.goal = np.array(
                     [
                         self._rng.uniform(0.0, self.arena_size),
-                        self._rng.uniform(self.arena_size * 0.8, self.arena_size),
+                        self._rng.uniform(
+                            self.arena_size * (1 - border_offset), self.arena_size
+                        ),
                     ],
                     dtype=float,
                 )
@@ -194,6 +208,11 @@ class AcedPayloadEnv(gym.Env):
             dist_payload = np.linalg.norm(self.payload_pos - self.agents_pos[i])
             dist_goal = np.linalg.norm(self.goal - self.agents_pos[i])
 
+            # Apply sensor dropout
+            if self._rng.random() < self.sensor_dropout_prob:
+                dist_payload = 0.0
+                dist_goal = 0.0
+
             msg = self.last_messages[i]
             if msg is None:
                 msg_vx, msg_vy, msg_dist_payload, msg_dist_goal = 0.0, 0.0, 0.0, 0.0
@@ -220,7 +239,7 @@ class AcedPayloadEnv(gym.Env):
             )
         return obs
 
-    def step(self, actions) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, actions) -> Tuple[np.ndarray, list[float], bool, bool, Dict]:
         """Execute one environment step."""
         self.step_count += 1
 
@@ -262,8 +281,11 @@ class AcedPayloadEnv(gym.Env):
                     float(dist_payload),
                     float(dist_goal),
                 )
-                broadcasts.append((i, msg))
-                self.total_updates_sent += 1
+
+                # Apply communication dropout
+                if self._rng.random() >= self.comm_dropout_prob:
+                    broadcasts.append((i, msg))
+                    self.total_updates_sent += 1
 
                 # Broadcasting agent enters cooldown
                 self.cooldowns[i] = self.cooldown_time
@@ -280,11 +302,16 @@ class AcedPayloadEnv(gym.Env):
                 if i == sender:
                     continue
 
-                # Immediate delivery
-                self.last_messages[i] = msg
-                self.msg_age[i] = 0
-                if self.event_driven:
-                    self.cooldowns[i] = 0
+                if self.comm_delay_steps > 0:
+                    # Queue message for future delivery
+                    delivery_step = self.step_count + self.comm_delay_steps
+                    self.message_queue.append((delivery_step, sender, msg))
+                else:
+                    # Immediate delivery
+                    self.last_messages[i] = msg
+                    self.msg_age[i] = 0
+                    if self.event_driven:
+                        self.cooldowns[i] = 0
 
         # Physics: clamp velocities BEFORE updating positions
         for i in range(self.n_agents):
