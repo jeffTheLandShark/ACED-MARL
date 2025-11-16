@@ -264,12 +264,16 @@ class AcedPayloadEnv(gym.Env):
                 pass  # hold
             elif a == 1:
                 self.agents_vel[i][0] += 1.0
+                self.cooldowns[i] = self.cooldown_time
             elif a == 2:
                 self.agents_vel[i][0] -= 1.0
+                self.cooldowns[i] = self.cooldown_time                
             elif a == 3:
                 self.agents_vel[i][1] += 1.0
+                self.cooldowns[i] = self.cooldown_time
             elif a == 4:
                 self.agents_vel[i][1] -= 1.0
+                self.cooldowns[i] = self.cooldown_time
             elif a == 5:
                 # Broadcast: velocity and beacon readings
                 dist_payload = np.linalg.norm(self.payload_pos - self.agents_pos[i])
