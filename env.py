@@ -68,12 +68,49 @@ class AcedPayloadEnv(gym.Env):
         # observation: [vx, vy, dist_payload, dist_goal, msg_vx, msg_vy,
         #               msg_dist_payload, msg_dist_goal, msg_age, cooldown]
         self.obs_dim = 10
-        self.observation_space = spaces.Box(
-            low=-100.0,
-            high=100.0,
-            shape=(self.n_agents, self.obs_dim),
+        # Use realistic bounds based on arena size and max speed
+        # Velocities: [-max_speed*1.5, max_speed*1.5] for safety margin
+        # Distances: [0, arena_size*sqrt(2)] for diagonal distance
+        # Message age: [0, max_steps] upper bound
+        # Cooldown: [0, cooldown_time] upper bound
+        max_distance = arena_size * math.sqrt(2)
+        low = np.array(
+            [
+                [
+                    -max_agent_speed * 1.5,
+                    -max_agent_speed * 1.5,
+                    0.0,
+                    0.0,
+                    -max_agent_speed * 1.5,
+                    -max_agent_speed * 1.5,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+            ]
+            * self.n_agents,
             dtype=np.float32,
         )
+        high = np.array(
+            [
+                [
+                    max_agent_speed * 1.5,
+                    max_agent_speed * 1.5,
+                    max_distance,
+                    max_distance,
+                    max_agent_speed * 1.5,
+                    max_agent_speed * 1.5,
+                    max_distance,
+                    max_distance,
+                    float(max_steps),
+                    float(cooldown_time) if cooldown_time > 0 else 1.0,
+                ]
+            ]
+            * self.n_agents,
+            dtype=np.float32,
+        )
+        self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         # actions per agent: 0..5
         self.action_space = spaces.MultiDiscrete([6] * self.n_agents)
 
@@ -237,7 +274,8 @@ class AcedPayloadEnv(gym.Env):
                 ],
                 dtype=np.float32,
             )
-        return obs
+        # Ensure observations are float32 (Gym expects float32 by default)
+        return obs.astype(np.float32, copy=False)
 
     def step(self, actions) -> Tuple[np.ndarray, list[float], bool, bool, Dict]:
         """Execute one environment step."""
@@ -245,8 +283,9 @@ class AcedPayloadEnv(gym.Env):
 
         actions = np.asarray(actions, dtype=int)
         if actions.shape[0] != self.n_agents:
-            raise ValueError("actions must be length n_agents")
-
+            raise ValueError(
+                f"actions must be length n_agents={self.n_agents}, got {actions.shape[0]}"
+            )
         # Process delayed messages from queue
         current_messages = []
         while self.message_queue and self.message_queue[0][0] <= self.step_count:
