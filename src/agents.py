@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from torch import Tensor
+from config import AgentConfig
 
 
 class AttentionUnit(nn.Module):
@@ -98,9 +99,10 @@ class MultiAgentBase(nn.Module):
 
     def __init__(
         self,
-        obs_dim: int,
-        action_dim: int,
-        n_agents: int,
+        config: AgentConfig | None = None,
+        obs_dim: int = 10,
+        action_dim: int = 6,
+        n_agents: int = 3,
         hidden_dim: int = 128,
         thought_dim: int = 64,
         use_atoc: bool = False,
@@ -114,6 +116,8 @@ class MultiAgentBase(nn.Module):
         self.thought_dim = thought_dim
         self.use_atoc = use_atoc
         self.comm_penalty = comm_penalty
+        if config is not None:
+            self.__dict__.update(config.__dict__)
 
         # Observation encoder
         self.obs_encoder = nn.Sequential(
@@ -424,15 +428,16 @@ class MAPPOAgent(MultiAgentBase):
 
     def __init__(
         self,
-        obs_dim: int,
-        action_dim: int,
-        n_agents: int,
+        config: AgentConfig | None = None,
+        obs_dim: int = 10,
+        action_dim: int = 6,
+        n_agents: int = 3,
         hidden_dim: int = 128,
         thought_dim: int = 64,
         use_atoc: bool = False,
     ):
         super().__init__(
-            obs_dim, action_dim, n_agents, hidden_dim, thought_dim, use_atoc
+            config, obs_dim, action_dim, n_agents, hidden_dim, thought_dim, use_atoc
         )
 
     def get_action_distribution(self, action_logits: torch.Tensor):
@@ -475,9 +480,10 @@ class MATAgent(MultiAgentBase):
 
     def __init__(
         self,
-        obs_dim: int,
-        action_dim: int,
-        n_agents: int,
+        config: AgentConfig | None = None,
+        obs_dim: int = 10,
+        action_dim: int = 6,
+        n_agents: int = 3,
         hidden_dim: int = 128,
         thought_dim: int = 64,
         use_atoc: bool = False,
@@ -485,7 +491,7 @@ class MATAgent(MultiAgentBase):
         n_layers: int = 2,
     ):
         super().__init__(
-            obs_dim, action_dim, n_agents, hidden_dim, thought_dim, use_atoc
+            config, obs_dim, action_dim, n_agents, hidden_dim, thought_dim, use_atoc
         )
 
         # Transformer encoder for processing agent interactions
@@ -500,7 +506,7 @@ class MATAgent(MultiAgentBase):
     def forward(
         self,
         obs: torch.Tensor,
-        thoughts: Optional[torch.Tensor] = None,
+        other_thoughts: Optional[torch.Tensor] = None,
         valid_mask: Optional[torch.Tensor] = None,
         deterministic: bool = False,
     ):
@@ -524,12 +530,12 @@ class MATAgent(MultiAgentBase):
 
         # Integrate communication (same as base class)
         attention_weights = None
-        if self.use_atoc and thoughts is not None:
+        if self.use_atoc and other_thoughts is not None:
             fused_hidden_list = []
             attention_weights_list = []
             for i in range(n_agents):
                 agent_hidden = hidden[:, i, :]
-                agent_thoughts_received = thoughts[:, i, :, :]
+                agent_thoughts_received = other_thoughts[:, i, :, :]
                 agent_mask = valid_mask[:, i, :] if valid_mask is not None else None
 
                 fused, attn = self.integrate_communication(
