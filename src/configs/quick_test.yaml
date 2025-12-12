@@ -1,0 +1,44 @@
+name: quick_test
+description: "Quick test configuration for debugging (minimal resources)"
+
+environment:
+  n_agents: 3
+  arena_size: 25.0
+  max_steps: 100
+  event_driven: true
+  cooldown_time: 2
+  contact_radius: 3.0
+  comm_dropout_prob: 0.0
+  comm_delay_steps: 0
+  sensor_dropout_prob: 0.0
+
+agent:
+  agent_type: mappo
+  use_atoc: false
+  hidden_dim: 64
+  thought_dim: 32
+
+training:
+  num_workers: 2
+  num_envs_per_worker: 2
+  batch_size: 128
+  learning_rate: 3e-4
+  gamma: 0.99
+  lambda: 0.95
+  entropy_coeff: 0.01
+  num_epochs: 5
+  total_steps: 50_000
+  checkpoint_freq: 5000
+
+checkpoint:
+  save_dir: results/checkpoints
+  keep_last_n: 1
+  save_frequency: 5000
+
+evaluation:
+  eval_episodes: 5
+  eval_frequency: 10000
+
+output_dir: results/quick_test
+seed: 42
+verbose: true
