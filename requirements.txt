@@ -1,0 +1,11 @@
+gymnasium
+numpy
+pytest
+torch>=2.0.0
+pettingzoo>=1.24.0
+ray[rllib]>=2.7.0
+matplotlib
+scipy
+tensorboard
+pandas
+
