@@ -3,8 +3,9 @@
 import argparse
 import numpy as np
 import torch
-from env import PettingZooPayloadEnv
+from env import PettingZooPayloadEnv, _make_parallel_pettingzoo_env
 from agents import MultiAgentBase
+import config
 
 
 def run_episode(
@@ -20,9 +21,7 @@ def run_episode(
     while not done:
         # Get comms from agents in env
         comms = env.get_comms()
-
-        # Count communication actions
-        comm_count += np.sum(actions == 5)
+        actions = agent.select_actions(obs, comms)
 
         # Step environment
         obs, rewards, done, truncated, info = env.step(actions)
@@ -60,16 +59,13 @@ def main():
     )
     args = parser.parse_args()
 
-    env = 
+    config_manager = config.get_default_configs()["quick_test"]
+
+    env = PettingZooPayloadEnv(config_manager.environment)
     agent = MultiAgentBase(
-        obs_dim=(
-            getattr(obs_space, "shape", (None,))[0] if obs_space is not None else 0
-        ),
-        action_dim=getattr(action_space, "n", getattr(action_space, "shape", (0,))[0]),
-        n_agents=model_config.get("custom_model_config", {}).get("n_agents", 3),
-        use_atoc=True,
-        hidden_dim=128,
-        thought_dim=64,
+        obs_dim=env.obs_dim,
+        action_dim=env.action_dim,
+        n_agents=env.n_agents,
     )
 
     successes = 0
