@@ -345,7 +345,7 @@ def get_default_configs() -> Dict[str, ExperimentConfig]:
     configs["quick_test"] = ExperimentConfig(
         name="quick_test",
         description="Quick test with low memory footprint",
-        environment=EnvironmentConfig(n_agents=2, max_steps=100, event_driven=False),
+        environment=EnvironmentConfig(n_agents=3, max_steps=100, event_driven=False),
         agent=AgentConfig(agent_type="mappo", use_atoc=False, hidden_dim=64),
         training=TrainingConfig(
             num_workers=1,
