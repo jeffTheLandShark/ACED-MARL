@@ -19,7 +19,7 @@ def run_episode(
     agent_ids = list(agents.keys())
     while not done:
         actions = {
-            agent_id: agents[agent_id].select_action(obs_dict[agent_id])
+            agent_id: agents[agent_id].select_action(torch.tensor(obs_dict[agent_id]))
             for agent_id in agent_ids
         }
         obs_dict, rewards, dones, trunc, infos = env.step(actions)
