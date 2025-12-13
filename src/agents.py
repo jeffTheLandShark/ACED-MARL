@@ -12,10 +12,10 @@ class AttentionUnit(nn.Module):
     Attention unit for ATOC that decides when to communicate and how to integrate messages.
     """
 
-    def __init__(self, hidden_dim: int, thought_dim: int):
+    def __init__(self, hidden_dim: int, broadcast_dim: int):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.thought_dim = thought_dim
+        self.broadcast_dim = broadcast_dim
 
         # Gate network: decides probability of initiating communication
         self.gate_net = nn.Sequential(
@@ -26,66 +26,66 @@ class AttentionUnit(nn.Module):
         )
 
         # Query and key networks for attention mechanism
-        self.query_net = nn.Linear(hidden_dim, thought_dim)
-        self.key_net = nn.Linear(thought_dim, thought_dim)
-        self.value_net = nn.Linear(thought_dim, thought_dim)
+        self.query_net = nn.Linear(hidden_dim, broadcast_dim)
+        self.key_net = nn.Linear(broadcast_dim, broadcast_dim)
+        self.value_net = nn.Linear(broadcast_dim, broadcast_dim)
 
     def forward(
         self,
         hidden_state: torch.Tensor,
-        thoughts: Optional[torch.Tensor] = None,
+        broadcasts: Optional[torch.Tensor] = None,
         return_gate_only: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
         Args:
             hidden_state: (batch_size, hidden_dim) - agent's internal representation
-            thoughts: (batch_size, n_other_agents, thought_dim) - received thought vectors
+            broadcasts: (batch_size, n_other_agents, broadcast_dim) - received broadcast vectors
             return_gate_only: if True, only compute communication gate
 
         Returns:
             gate_prob: (batch_size, 1) - probability of initiating communication
-            integrated_thought: (batch_size, thought_dim) - attention-weighted message integration
+            integrated_broadcast: (batch_size, broadcast_dim) - attention-weighted message integration
             attention_weights: (batch_size, n_other_agents) - attention over received messages
         """
         # Communication gate: should this agent broadcast?
         gate_prob = self.gate_net(hidden_state)
 
-        if return_gate_only or thoughts is None:
+        if return_gate_only or broadcasts is None:
             return gate_prob, None, None
 
-        # Attention over received thoughts
+        # Attention over received broadcasts
         batch_size = hidden_state.shape[0]
-        n_messages = thoughts.shape[1] if len(thoughts.shape) == 3 else 1
+        n_messages = broadcasts.shape[1] if len(broadcasts.shape) == 3 else 1
 
         # Query from own hidden state
-        query = self.query_net(hidden_state)  # (batch, thought_dim)
+        query = self.query_net(hidden_state)  # (batch, broadcast_dim)
 
-        # Keys and values from received thoughts
-        if len(thoughts.shape) == 2:
-            thoughts = thoughts.unsqueeze(1)  # (batch, 1, thought_dim)
+        # Keys and values from received broadcasts
+        if len(broadcasts.shape) == 2:
+            broadcasts = broadcasts.unsqueeze(1)  # (batch, 1, broadcast_dim)
 
-        keys = self.key_net(thoughts)  # (batch, n_messages, thought_dim)
-        values = self.value_net(thoughts)  # (batch, n_messages, thought_dim)
+        keys = self.key_net(broadcasts)  # (batch, n_messages, broadcast_dim)
+        values = self.value_net(broadcasts)  # (batch, n_messages, broadcast_dim)
 
         # Scaled dot-product attention
         scores = torch.bmm(
-            query.unsqueeze(1),  # (batch, 1, thought_dim)
-            keys.transpose(1, 2),  # (batch, thought_dim, n_messages)
+            query.unsqueeze(1),  # (batch, 1, broadcast_dim)
+            keys.transpose(1, 2),  # (batch, broadcast_dim, n_messages)
         ) / np.sqrt(
-            self.thought_dim
+            self.broadcast_dim
         )  # (batch, 1, n_messages)
 
         attention_weights = F.softmax(scores, dim=-1)  # (batch, 1, n_messages)
 
         # Weighted sum of values
-        integrated_thought = torch.bmm(
+        integrated_broadcast = torch.bmm(
             attention_weights,  # (batch, 1, n_messages)
-            values,  # (batch, n_messages, thought_dim)
+            values,  # (batch, n_messages, broadcast_dim)
         ).squeeze(
             1
-        )  # (batch, thought_dim)
+        )  # (batch, broadcast_dim)
 
-        return gate_prob, integrated_thought, attention_weights.squeeze(1)
+        return gate_prob, integrated_broadcast, attention_weights.squeeze(1)
 
 
 class MultiAgentBase(nn.Module):
@@ -102,18 +102,18 @@ class MultiAgentBase(nn.Module):
         config: AgentConfig | None = None,
         obs_dim: int = 10,
         action_dim: int = 6,
-        n_agents: int = 3,
         hidden_dim: int = 128,
-        thought_dim: int = 64,
+        broadcast_dim: int = 64,
         use_atoc: bool = False,
         comm_penalty: float = 0.01,
     ):
         super().__init__()
-        self.obs_dim = obs_dim
-        self.action_dim = action_dim
-        self.n_agents = n_agents
+        self.obs_dim = obs_dim  # Base observation: 6
+        self.broadcast_dim = broadcast_dim  # 64
+        self.max_other_agents = max_other_agents  # n_agents - 1
+        self.extended_obs_dim = obs_dim + (max_other_agents * broadcast_dim)
         self.hidden_dim = hidden_dim
-        self.thought_dim = thought_dim
+        self.broadcast_dim = broadcast_dim
         self.use_atoc = use_atoc
         self.comm_penalty = comm_penalty
         if config is not None:
@@ -129,13 +129,13 @@ class MultiAgentBase(nn.Module):
 
         # ATOC attention unit (optional)
         if use_atoc:
-            self.attention_unit = AttentionUnit(hidden_dim, thought_dim)
-            # Thought generator: creates message content from hidden state
-            self.thought_generator = nn.Sequential(
-                nn.Linear(hidden_dim, thought_dim), nn.Tanh()
+            self.attention_unit = AttentionUnit(hidden_dim, broadcast_dim)
+            # Broadcast generator: creates message content from hidden state
+            self.broadcast_generator = nn.Sequential(
+                nn.Linear(hidden_dim, broadcast_dim), nn.Tanh()
             )
             # Fusion layer: combines own hidden state with integrated messages
-            self.fusion_layer = nn.Linear(hidden_dim + thought_dim, hidden_dim)
+            self.fusion_layer = nn.Linear(hidden_dim + broadcast_dim, hidden_dim)
 
         # Action head (to be used by subclasses)
         self.action_net = nn.Sequential(
@@ -149,63 +149,26 @@ class MultiAgentBase(nn.Module):
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1)
         )
 
-        # Centralized critic for CTDE (Centralized Training Decentralized Execution)
-        # Takes concatenated observations of all agents during training
-        self.centralized_critic = nn.Sequential(
-            nn.Linear(obs_dim * n_agents, hidden_dim * 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
-
     def encode_observation(self, obs: torch.Tensor) -> torch.Tensor:
         """
         Encode raw observations into hidden representation.
 
         Args:
-            obs: (batch_size, n_agents, obs_dim) or (batch_size, obs_dim)
+            obs: (batch_size, obs_dim)
 
         Returns:
-            hidden: (batch_size, n_agents, hidden_dim) or (batch_size, hidden_dim)
+            hidden: (batch_size, hidden_dim)
         """
-        original_shape = obs.shape
-        if len(original_shape) == 3:
-            batch_size, n_agents, obs_dim = original_shape
-            obs_flat = obs.reshape(batch_size * n_agents, obs_dim)
-            hidden = self.obs_encoder(obs_flat)
-            hidden = hidden.reshape(batch_size, n_agents, self.hidden_dim)
-        else:
-            hidden = self.obs_encoder(obs)
-        return hidden
+        return self.obs_encoder(obs)
 
-    def compute_centralized_value(self, obs: torch.Tensor) -> torch.Tensor:
-        """
-        Compute centralized value estimate for CTDE training.
-
-        Args:
-            obs: (batch_size, n_agents, obs_dim) - all agent observations
-
-        Returns:
-            centralized_values: (batch_size, n_agents, 1) - value estimates using global info
-        """
-        batch_size, n_agents, obs_dim = obs.shape
-        # Flatten all agent observations into a single vector
-        obs_all = obs.reshape(batch_size, n_agents * obs_dim)
-        # Compute centralized value (one value per batch, broadcast to all agents)
-        central_value = self.centralized_critic(obs_all)  # (batch, 1)
-        # Expand to match shape (batch, n_agents, 1) for compatibility
-        centralized_values = central_value.unsqueeze(1).expand(batch_size, n_agents, 1)
-        return centralized_values
-
-    def generate_thought(self, hidden: torch.Tensor) -> torch.Tensor:
-        """Generate thought vector for communication."""
+    def generate_broadcast(self, hidden: torch.Tensor) -> torch.Tensor:
+        """Generate broadcast message vector for communication (action 5 only)."""
         if not self.use_atoc:
-            # return empty thought if ATOC is not used
+            # return empty broadcast if ATOC is not used
             return torch.zeros(
-                (hidden.shape[0], self.thought_dim), device=hidden.device
+                (hidden.shape[0], self.broadcast_dim), device=hidden.device
             )
-        return self.thought_generator(hidden)
+        return self.broadcast_generator(hidden)
 
     def decide_communication(
         self, hidden: torch.Tensor, deterministic: bool = False
@@ -214,12 +177,12 @@ class MultiAgentBase(nn.Module):
         Decide whether to communicate using ATOC gate.
 
         Args:
-            hidden: (batch_size, hidden_dim) or (batch_size, n_agents, hidden_dim)
+            hidden: (batch_size, hidden_dim)
             deterministic: if True, use gate_prob > 0.5 instead of sampling
 
         Returns:
-            should_communicate: (batch_size,) or (batch_size, n_agents) - binary decision
-            gate_probs: (batch_size,) or (batch_size, n_agents) - communication probability
+            should_communicate: (batch_size,) - binary decision
+            gate_probs: (batch_size,) - communication probability
         """
         if not self.use_atoc:
             # Without ATOC, always communicate (or never, depending on your baseline)
@@ -228,17 +191,8 @@ class MultiAgentBase(nn.Module):
                 shape, device=hidden.device
             )
 
-        original_shape = hidden.shape
-        if len(original_shape) == 3:
-            batch_size, n_agents, _ = original_shape
-            hidden_flat = hidden.reshape(batch_size * n_agents, self.hidden_dim)
-            gate_probs_flat, _, _ = self.attention_unit(
-                hidden_flat, return_gate_only=True
-            )
-            gate_probs = gate_probs_flat.reshape(batch_size, n_agents).squeeze(-1)
-        else:
-            gate_probs, _, _ = self.attention_unit(hidden, return_gate_only=True)
-            gate_probs = gate_probs.squeeze(-1)
+        gate_probs, _, _ = self.attention_unit(hidden, return_gate_only=True)
+        gate_probs = gate_probs.squeeze(-1)
 
         if deterministic:
             should_communicate = (gate_probs > 0.5).float()
@@ -250,44 +204,40 @@ class MultiAgentBase(nn.Module):
     def integrate_communication(
         self,
         hidden: torch.Tensor,
-        thoughts: torch.Tensor,
+        broadcasts: torch.Tensor,
         valid_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Integrate received thoughts using attention mechanism.
+        Integrate received broadcasts using attention mechanism.
 
         Args:
             hidden: (batch_size, hidden_dim) - agent's hidden state
-            thoughts: (batch_size, n_messages, thought_dim) - received thoughts
+            broadcasts: (batch_size, n_messages, broadcast_dim) - received broadcasts
             valid_mask: (batch_size, n_messages) - mask for valid messages
 
         Returns:
             fused_hidden: (batch_size, hidden_dim) - hidden state after communication
             attention_weights: (batch_size, n_messages) - attention over messages
         """
-        if not self.use_atoc or thoughts is None:
-            return hidden, torch.zeros_like(thoughts[:, :, 0])
+        if not self.use_atoc or broadcasts is None:
+            return hidden, torch.zeros_like(broadcasts[:, :, 0])
 
-        # Apply mask to thoughts if provided (zero out invalid messages)
+        # Apply mask to broadcasts if provided (zero out invalid messages)
         if valid_mask is not None:
-            thoughts = thoughts * valid_mask.unsqueeze(-1)
+            broadcasts = broadcasts * valid_mask.unsqueeze(-1)
 
-        gate_prob, integrated_thought, attention_weights = self.attention_unit(
-            hidden, thoughts
+        gate_prob, integrated_broadcast, attention_weights = self.attention_unit(
+            hidden, broadcasts
         )
 
         # Fuse own hidden state with integrated communication
-        combined = torch.cat([hidden, integrated_thought], dim=-1)
+        combined = torch.cat([hidden, integrated_broadcast], dim=-1)
         fused_hidden = self.fusion_layer(combined)
 
         return fused_hidden, attention_weights
 
     def forward(
-        self,
-        obs: torch.Tensor,
-        other_thoughts: Optional[torch.Tensor] = None,
-        valid_mask: Optional[torch.Tensor] = None,
-        deterministic: bool = False,
+        self, obs: torch.Tensor, deterministic: bool = False
     ) -> Dict[str, torch.Tensor]:
         """
         Per-agent forward pass. Designed for RLlib with independent agent calls.
@@ -315,23 +265,20 @@ class MultiAgentBase(nn.Module):
         # Encode observation
         hidden = self.obs_encoder(obs)  # (batch, hidden_dim)
 
-        # Generate thought for broadcasting to other agents
-        agent_thought = torch.zeros(
-            (batch_size, self.thought_dim), device=hidden.device
+        # Generate broadcast message
+        agent_broadcast = torch.zeros(
+            (batch_size, self.broadcast_dim), device=hidden.device
         )
         if self.use_atoc:
-            agent_thought = self.generate_thought(hidden)  # (batch, thought_dim)
+            agent_broadcast = self.generate_broadcast(hidden)
 
-        # Integrate received thoughts from other agents
+        # Integrate received broadcasts
         attention_weights = torch.zeros(batch_size, 0)
-        if self.use_atoc and other_thoughts is not None and other_thoughts.shape[1] > 0:
+        if self.use_atoc and valid_mask.sum() > 0:
             fused_hidden, attention_weights = self.integrate_communication(
-                hidden, other_thoughts, valid_mask
+                hidden, broadcasts, valid_mask
             )
             hidden = fused_hidden
-        else:
-            # No communication or no other agents' thoughts available
-            pass
 
         # Decide whether to communicate
         comm_decision, comm_prob = self.decide_communication(hidden, deterministic)
@@ -351,7 +298,7 @@ class MultiAgentBase(nn.Module):
         return {
             "action_logits": action_logits,
             "values": values,
-            "thought": agent_thought,
+            "broadcast": agent_broadcast,
             "comm_decision": comm_decision,
             "comm_prob": comm_prob,
             "attention_weights": attention_weights,
@@ -369,56 +316,54 @@ class MultiAgentBase(nn.Module):
         """
         return self.comm_penalty * comm_decisions
 
-    def select_actions(
-        self,
-        obs: torch.Tensor,
-        thoughts: Optional[torch.Tensor] = None,
-        deterministic: bool = False,
+    def get_action_distribution(self, action_logits: torch.Tensor):
+        """Get categorical distribution over actions."""
+        return torch.distributions.Categorical(logits=action_logits)
+
+    def select_action(
+        self, obs: torch.Tensor, deterministic: bool = False
     ) -> Dict[str, torch.Tensor]:
-        """Sample actions from policy.
+        """
+        Sample actions with broadcasts embedded in obs.
 
         Args:
-            obs: (batch_size, obs_dim) - single agent observation
-            thoughts: (batch_size, n_other_agents, thought_dim) - received thoughts from other
+            obs: (batch_size, extended_obs_dim)
             deterministic: if True, use deterministic actions
         Returns:
-            Dictionary containing:
+        Dictionary containing:
             - actions: (batch_size,) - sampled actions
             - log_probs: (batch_size,) - log probabilities of sampled actions
             - values: (batch_size,) - value estimates
             - comm_decisions: (batch_size,) - binary communication decisions
             - comm_probs: (batch_size,) - probabilities of communication
-            - thoughts: (batch_size, thought_dim) - generated thoughts for broadcasting
+            - broadcast: (batch_size, broadcast_dim) - broadcast message
         """
-        output = self.forward(obs, thoughts, deterministic=deterministic)
-        action_dist = torch.distributions.Categorical(logits=output["action_logits"])
+        output = self.forward(obs, deterministic=deterministic)
+        action_logits = output["action_logits"].clone()
+
+        # ATOC gating: boost action 5 by comm_prob
+        if self.use_atoc:
+            action_logits[..., 5] = action_logits[..., 5] + torch.log(
+                output["comm_prob"] + 1e-8
+            )
+
+        action_dist = self.get_action_distribution(action_logits)
 
         if deterministic:
-            actions = action_dist.probs.argmax(dim=-1)
+            action = action_dist.probs.argmax(dim=-1)
         else:
-            actions = action_dist.sample()
+            action = action_dist.sample()
 
-        log_probs = action_dist.log_prob(actions)
+        log_probs = action_dist.log_prob(action)
 
         return {
-            "actions": actions,
-            "log_probs": log_probs,
-            "values": output["values"],
-            "comm_decisions": output["comm_decision"],
-            "comm_probs": output["comm_prob"],
-            "thoughts": output["thought"],
+            "action": action,
+            "log_prob": log_probs,
+            "value": output["values"],
+            "comm_decision": output["comm_decision"],
+            "comm_prob": output["comm_prob"],
+            "broadcast": output["broadcast"],
         }
-
-
-# class RandomAgent(MultiAgentBase):
-#     """Returns random actions for the environment.
-
-#     Use `act(observations, readiness_mask)` to select actions.
-#     If readiness_mask is None, all agents are allowed to act.
-#     """
-
-#     def __init__(self, n_agents: int):
-#         self.n_agents = n_agents
 
 
 class MAPPOAgent(MultiAgentBase):
@@ -431,44 +376,13 @@ class MAPPOAgent(MultiAgentBase):
         config: AgentConfig | None = None,
         obs_dim: int = 10,
         action_dim: int = 6,
-        n_agents: int = 3,
         hidden_dim: int = 128,
-        thought_dim: int = 64,
+        broadcast_dim: int = 64,
         use_atoc: bool = False,
     ):
         super().__init__(
-            config, obs_dim, action_dim, n_agents, hidden_dim, thought_dim, use_atoc
+            config, obs_dim, action_dim, hidden_dim, broadcast_dim, use_atoc
         )
-
-    def get_action_distribution(self, action_logits: torch.Tensor):
-        """Get categorical distribution over actions."""
-        return torch.distributions.Categorical(logits=action_logits)
-
-    def select_actions(
-        self,
-        obs: torch.Tensor,
-        thoughts: Optional[torch.Tensor] = None,
-        deterministic: bool = False,
-    ) -> Dict[str, torch.Tensor]:
-        """Sample actions from policy."""
-        output = self.forward(obs, thoughts, deterministic=deterministic)
-        action_dist = self.get_action_distribution(output["action_logits"])
-
-        if deterministic:
-            actions = action_dist.probs.argmax(dim=-1)
-        else:
-            actions = action_dist.sample()
-
-        log_probs = action_dist.log_prob(actions)
-
-        return {
-            "actions": actions,
-            "log_probs": log_probs,
-            "values": output["values"],
-            "comm_decisions": output["comm_decisions"],
-            "comm_probs": output["comm_probs"],
-            "thoughts": output["thoughts"],
-        }
 
 
 class MATAgent(MultiAgentBase):
@@ -485,13 +399,13 @@ class MATAgent(MultiAgentBase):
         action_dim: int = 6,
         n_agents: int = 3,
         hidden_dim: int = 128,
-        thought_dim: int = 64,
+        broadcast_dim: int = 64,
         use_atoc: bool = False,
         n_heads: int = 4,
         n_layers: int = 2,
     ):
         super().__init__(
-            config, obs_dim, action_dim, n_agents, hidden_dim, thought_dim, use_atoc
+            config, obs_dim, action_dim, n_agents, hidden_dim, broadcast_dim, use_atoc
         )
 
         # Transformer encoder for processing agent interactions
@@ -506,7 +420,7 @@ class MATAgent(MultiAgentBase):
     def forward(
         self,
         obs: torch.Tensor,
-        other_thoughts: Optional[torch.Tensor] = None,
+        other_broadcasts: Optional[torch.Tensor] = None,
         valid_mask: Optional[torch.Tensor] = None,
         deterministic: bool = False,
     ):
@@ -530,12 +444,12 @@ class MATAgent(MultiAgentBase):
 
         # Integrate communication (same as base class)
         attention_weights = None
-        if self.use_atoc and other_thoughts is not None:
+        if self.use_atoc and other_broadcasts is not None:
             fused_hidden_list = []
             attention_weights_list = []
             for i in range(n_agents):
                 agent_hidden = hidden[:, i, :]
-                agent_thoughts_received = other_thoughts[:, i, :, :]
+                agent_thoughts_received = other_broadcasts[:, i, :, :]
                 agent_mask = valid_mask[:, i, :] if valid_mask is not None else None
 
                 fused, attn = self.integrate_communication(
@@ -585,25 +499,25 @@ class MATAgent(MultiAgentBase):
     def select_actions(
         self,
         obs: torch.Tensor,
-        thoughts: Optional[torch.Tensor] = None,
+        broadcasts: Optional[torch.Tensor] = None,
         deterministic: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """Sample actions from policy using transformer."""
-        output = self.forward(obs, thoughts, deterministic=deterministic)
+        output = self.forward(obs, broadcasts, deterministic=deterministic)
         action_dist = self.get_action_distribution(output["action_logits"])
 
         if deterministic:
-            actions = action_dist.probs.argmax(dim=-1)
+            action = action_dist.probs.argmax(dim=-1)
         else:
-            actions = action_dist.sample()
+            action = action_dist.sample()
 
-        log_probs = action_dist.log_prob(actions)
+        log_prob = action_dist.log_prob(action)
 
         return {
-            "actions": actions,
-            "log_probs": log_probs,
-            "values": output["values"],
-            "comm_decisions": output["comm_decisions"],
-            "comm_probs": output["comm_probs"],
-            "thoughts": output["thoughts"],
+            "action": action,
+            "log_prob": log_prob,
+            "value": output["values"],
+            "comm_decision": output["comm_decision"],
+            "comm_prob": output["comm_prob"],
+            "broadcast": output["broadcast"],
         }
