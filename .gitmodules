@@ -1,0 +1,3 @@
+[submodule "src/Multi-Agent-Transformer"]
+	path = src/Multi-Agent-Transformer
+	url = git@github.com:PKU-MARL/Multi-Agent-Transformer.git
