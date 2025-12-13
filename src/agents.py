@@ -100,16 +100,17 @@ class MultiAgentBase(nn.Module):
     def __init__(
         self,
         config: AgentConfig | None = None,
-        obs_dim: int = 10,
+        obs_dim: int = 5,
         action_dim: int = 6,
         hidden_dim: int = 128,
         broadcast_dim: int = 64,
         use_atoc: bool = False,
         comm_penalty: float = 0.01,
+        max_other_agents: int = 2,
     ):
         super().__init__()
-        self.obs_dim = obs_dim  # Base observation: 6
-        self.broadcast_dim = broadcast_dim  # 64
+        self.obs_dim = obs_dim
+        self.broadcast_dim = broadcast_dim
         self.max_other_agents = max_other_agents  # n_agents - 1
         self.extended_obs_dim = obs_dim + (max_other_agents * broadcast_dim)
         self.hidden_dim = hidden_dim
@@ -148,18 +149,6 @@ class MultiAgentBase(nn.Module):
         self.value_net = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1)
         )
-
-    def encode_observation(self, obs: torch.Tensor) -> torch.Tensor:
-        """
-        Encode raw observations into hidden representation.
-
-        Args:
-            obs: (batch_size, obs_dim)
-
-        Returns:
-            hidden: (batch_size, hidden_dim)
-        """
-        return self.obs_encoder(obs)
 
     def generate_broadcast(self, hidden: torch.Tensor) -> torch.Tensor:
         """Generate broadcast message vector for communication (action 5 only)."""
@@ -243,9 +232,7 @@ class MultiAgentBase(nn.Module):
         Per-agent forward pass. Designed for RLlib with independent agent calls.
 
         Args:
-            obs: (batch_size, obs_dim) - single agent observation
-            other_thoughts: (batch_size, n_other_agents, thought_dim) - received thoughts from other agents
-            valid_mask: (batch_size, n_other_agents) - mask for valid thoughts
+            obs: (batch_size, extended_obs_dim) where extended_obs_dim = obs_dim + (max_other_agents * broadcast_dim)
             deterministic: if True, use deterministic actions
 
         Returns:
@@ -259,11 +246,17 @@ class MultiAgentBase(nn.Module):
         """
         # Ensure obs is 2D: (batch, obs_dim)
         if len(obs.shape) == 1:
-            obs = obs.unsqueeze(0)
-        batch_size = obs.shape[0]
+            obs = obs.unsqueeze(0)  # (1, extended_obs_dim)
+        # Split observation into base_obs and broadcasts
+        base_obs = obs[: self.obs_dim]  # (batch, obs_dim)
+        broadcast = obs[self.obs_dim :]
+        batch_size = base_obs.shape[0]
+
+        # Reshape broadcasts: (batch, max_other_agents, broadcast_dim)
+        broadcast = broadcast.reshape(-1, self.max_other_agents, self.broadcast_dim)
 
         # Encode observation
-        hidden = self.obs_encoder(obs)  # (batch, hidden_dim)
+        hidden = self.obs_encoder(base_obs)  # (batch, hidden_dim)
 
         # Generate broadcast message
         agent_broadcast = torch.zeros(
@@ -273,10 +266,12 @@ class MultiAgentBase(nn.Module):
             agent_broadcast = self.generate_broadcast(hidden)
 
         # Integrate received broadcasts
-        attention_weights = torch.zeros(batch_size, 0)
-        if self.use_atoc and valid_mask.sum() > 0:
+        attention_weights = torch.zeros(
+            batch_size, self.max_other_agents, device=hidden.device
+        )
+        if self.use_atoc:
             fused_hidden, attention_weights = self.integrate_communication(
-                hidden, broadcasts, valid_mask
+                hidden, broadcast
             )
             hidden = fused_hidden
 
