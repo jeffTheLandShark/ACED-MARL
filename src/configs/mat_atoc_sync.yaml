@@ -16,7 +16,7 @@ agent:
   agent_type: mat
   use_atoc: true
   hidden_dim: 128
-  thought_dim: 64
+  broadcast_dim: 64
   n_heads: 4
   n_layers: 2
 

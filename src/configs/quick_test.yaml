@@ -16,7 +16,7 @@ agent:
   agent_type: mappo
   use_atoc: false
   hidden_dim: 64
-  thought_dim: 32
+  broadcast_dim: 32
 
 training:
   num_workers: 2

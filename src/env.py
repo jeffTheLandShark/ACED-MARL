@@ -569,7 +569,7 @@ class PettingZooPayloadEnv(ParallelEnv):
         Handles:
         - Converting per-agent actions to environment array format
         - Masking invalid actions (e.g., broadcast when on cooldown in event-driven mode)
-        - Sharing thoughts through the thought buffer
+        - Sharing broadcasts through the broadcast buffer
         """
 
         # RLlib may pass plain ints/ndarrays per agent or dicts with an "action" key.

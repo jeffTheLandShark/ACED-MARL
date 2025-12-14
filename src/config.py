@@ -44,7 +44,7 @@ class AgentConfig:
     use_atoc: bool = False
     hidden_dim: int = 128
     broadcast_dim: int = 64
-    thought_dim: int = 64
+    broadcast_dim: int = 64
 
     # MAT-specific
     n_heads: int = 4

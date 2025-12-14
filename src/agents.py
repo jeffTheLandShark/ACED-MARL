@@ -239,7 +239,7 @@ class MultiAgentBase(nn.Module):
             Dictionary containing:
                 - action_logits: (batch_size, action_dim)
                 - values: (batch_size,)
-                - thought: (batch_size, thought_dim) - generated thought for broadcasting
+                - broadcast: (batch_size, broadcast_dim) - generated broadcast for broadcasting
                 - comm_decision: (batch_size,) - whether to communicate (binary 0/1)
                 - comm_prob: (batch_size,) - probability of communication
                 - attention_weights: (batch_size, n_other_agents) - if using ATOC
@@ -431,13 +431,13 @@ class MATAgent(MultiAgentBase):
         # Apply transformer to model agent interactions
         hidden = self.transformer(hidden)  # (batch, n_agents, hidden_dim)
 
-        # Generate thoughts
-        agent_thoughts = None
+        # Generate broadcasts
+        agent_broadcasts = None
         if self.use_atoc:
             hidden_flat = hidden.reshape(batch_size * n_agents, self.hidden_dim)
-            thoughts_flat = self.generate_thought(hidden_flat)
-            agent_thoughts = thoughts_flat.reshape(
-                batch_size, n_agents, self.thought_dim
+            broadcasts_flat = self.generate_broadcast(hidden_flat)
+            agent_broadcasts = broadcasts_flat.reshape(
+                batch_size, n_agents, self.broadcast_dim
             )
 
         # Integrate communication (same as base class)
@@ -447,11 +447,11 @@ class MATAgent(MultiAgentBase):
             attention_weights_list = []
             for i in range(n_agents):
                 agent_hidden = hidden[:, i, :]
-                agent_thoughts_received = other_broadcasts[:, i, :, :]
+                agent_broadcasts_received = other_broadcasts[:, i, :, :]
                 agent_mask = valid_mask[:, i, :] if valid_mask is not None else None
 
                 fused, attn = self.integrate_communication(
-                    agent_hidden, agent_thoughts_received, agent_mask
+                    agent_hidden, agent_broadcasts_received, agent_mask
                 )
                 fused_hidden_list.append(fused)
                 if attn is not None:
@@ -485,7 +485,7 @@ class MATAgent(MultiAgentBase):
             "values": values,
             "comm_decisions": comm_decisions,
             "comm_probs": comm_probs,
-            "thoughts": agent_thoughts,
+            "broadcasts": agent_broadcasts,
             "attention_weights": attention_weights,
             "hidden": hidden,
         }
