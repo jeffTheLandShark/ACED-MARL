@@ -247,13 +247,16 @@ class MultiAgentBase(nn.Module):
         # Ensure obs is 2D: (batch, obs_dim)
         if len(obs.shape) == 1:
             obs = obs.unsqueeze(0)  # (1, extended_obs_dim)
-        # Split observation into base_obs and broadcasts
-        base_obs = obs[: self.obs_dim]  # (batch, obs_dim)
-        broadcast = obs[self.obs_dim :]
+
+        # Split observation into base_obs and broadcasts along the feature dimension
+        base_obs = obs[:, : self.obs_dim]  # (batch, obs_dim)
+        broadcast_flat = obs[:, self.obs_dim :]
         batch_size = base_obs.shape[0]
 
-        # Reshape broadcasts: (batch, max_other_agents, broadcast_dim)
-        broadcast = broadcast.reshape(-1, self.max_other_agents, self.broadcast_dim)
+        # Reshape flattened broadcasts into (batch, n_messages, broadcast_dim)
+        broadcast = broadcast_flat
+        if broadcast_flat.numel() > 0:
+            broadcast = broadcast_flat.reshape(batch_size, -1, self.broadcast_dim)
 
         # Encode observation
         hidden = self.obs_encoder(base_obs)  # (batch, hidden_dim)
