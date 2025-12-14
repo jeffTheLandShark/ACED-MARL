@@ -67,7 +67,7 @@ class TrainingConfig:
     rollout_fragment_length: int = 200
     train_batch_size: int = 4000
     sgd_minibatch_size: int = 128
-    num_sgd_iter: int = 20
+    num_epochs: int = 20
 
     # Learning rates
     lr: float = 3e-4

@@ -59,7 +59,7 @@ def create_mappo_config(exp_config: config.ExperimentConfig):
 
     # Create a sample environment to get spaces via PettingZoo wrapper
     sample_env = PettingZooEnv(PettingZooPayloadEnv(exp_config.environment))
-    
+
     # Extract individual agent spaces from the Dict spaces
     # The observation_space and action_space are Dict spaces with per-agent keys
     first_agent = sample_env.agents[0]
@@ -85,7 +85,7 @@ def create_mappo_config(exp_config: config.ExperimentConfig):
             train_batch_size=exp_config.training.train_batch_size,
             minibatch_size=exp_config.training.sgd_minibatch_size,
             num_epochs=getattr(
-                exp_config.training, "num_epochs", exp_config.training.num_sgd_iter
+                exp_config.training, "num_epochs", exp_config.training.num_epochs
             ),
             lr=exp_config.training.lr,
             gamma=exp_config.training.gamma,
