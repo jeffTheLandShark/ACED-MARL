@@ -654,8 +654,10 @@ def _make_parallel_pettingzoo_env(base_config: dict):
         except Exception:
             # env_context may be an EnvContext; ignore merging in that case
             pass
-        # Create and return the environment (no ParallelPettingZooEnv wrapper)
-        return PettingZooPayloadEnv(EnvironmentConfig(**cfg))
+        # Wrap PettingZoo parallel env with RLlib's ParallelPettingZooEnv to satisfy Gymnasium API expectations
+        from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+
+        return ParallelPettingZooEnv(PettingZooPayloadEnv(EnvironmentConfig(**cfg)))
 
     return _creator
 
