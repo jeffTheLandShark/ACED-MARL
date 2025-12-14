@@ -129,7 +129,7 @@ def summarize_trial(trial_dir: Path) -> Dict[str, Any]:
         "best_return_mean": _metric_from_record(best) if best else None,
         "best_iteration": safe_get(best, "training_iteration"),
         "last_return_mean": _metric_from_record(last) if last else None,
-        "last_episode_len_mean": _episode_len_from_record(last),
+        "last_episode_len_mean": _episode_len_from_record(last) if last else None,
         "total_env_steps": safe_get(last, "num_env_steps_sampled_lifetime"),
         "total_agent_steps": safe_get(last, "num_agent_steps_sampled_lifetime"),
         "last_timestamp": safe_get(last, "date"),
@@ -151,10 +151,28 @@ def main():
 
     root: Path = args.root
     if not root.exists():
-        print(f"No such directory: {root}")
-        return
+        # Fallback: common alternative layout under src/results
+        alt_root = Path("src") / root
+        if alt_root.exists():
+            root = alt_root
+        else:
+            print(f"No such directory: {root}")
+            return
 
     trial_dirs = [p for p in root.iterdir() if p.is_dir() and p.name.startswith("PPO_")]
+    if not trial_dirs:
+        # Try one-level deeper (e.g., root/quick_test/PPO_*)
+        nested = []
+        for sub in root.iterdir():
+            if sub.is_dir():
+                nested.extend(
+                    [
+                        p
+                        for p in sub.iterdir()
+                        if p.is_dir() and p.name.startswith("PPO_")
+                    ]
+                )
+        trial_dirs = nested
     if not trial_dirs:
         print(f"No trial directories found under {root}")
         return
