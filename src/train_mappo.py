@@ -186,7 +186,9 @@ def main():
     storage_uri = f"file://{output_dir.resolve()}"
 
     # Save config
-    config.ConfigManager.save_yaml(exp_config, str(output_dir / "config.yaml"))
+    config.ConfigManager.save_yaml(
+        exp_config, str(output_dir / f"{exp_config.name}_config.yaml")
+    )
 
     # Create MAPPO configuration
     ppo_config = create_mappo_config(exp_config)
