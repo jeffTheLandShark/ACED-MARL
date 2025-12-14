@@ -14,6 +14,7 @@ from pathlib import Path
 import ray
 from ray import tune
 from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.tune.registry import register_env
 
 # RLlib wrapper for PettingZoo environments
@@ -21,6 +22,33 @@ from ray.rllib.env.wrappers.pettingzoo_env import PettingZooEnv
 
 import config
 from env import PettingZooPayloadEnv, register_and_get_env_name
+
+
+class PayloadMetricsCallbacks(DefaultCallbacks):
+    """Collect env info metrics (success, contact, distance)."""
+
+    def on_episode_end(self, *, episode, **kwargs):  # type: ignore[override]
+        infos = []
+        for agent_id in episode.get_agents():
+            info = episode.last_info_for(agent_id)
+            if info:
+                infos.append(info)
+        if not infos:
+            return
+
+        def _avg(key):
+            vals = [i[key] for i in infos if key in i]
+            return float(sum(vals) / len(vals)) if vals else None
+
+        metrics = {
+            "contact_fraction": _avg("contact_fraction"),
+            "avg_contact_fraction": _avg("avg_contact_fraction"),
+            "success_rate": _avg("success"),
+            "dist_to_goal": _avg("dist_to_goal"),
+        }
+        for k, v in metrics.items():
+            if v is not None:
+                episode.custom_metrics[k] = v
 
 
 def create_mappo_config(exp_config: config.ExperimentConfig):
@@ -74,6 +102,7 @@ def create_mappo_config(exp_config: config.ExperimentConfig):
             policies={"shared_policy": (None, obs_space, act_space, {})},
             policy_mapping_fn=lambda agent_id, *args, **kwargs: "shared_policy",
         )
+        .callbacks(PayloadMetricsCallbacks)
         .debugging(
             log_level="WARN",
         )
