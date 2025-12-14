@@ -19,7 +19,9 @@ def run_episode(
     agent_ids = list(agents.keys())
     while not done:
         actions = {
-            agent_id: agents[agent_id].select_action(torch.tensor(obs_dict[agent_id]))
+            agent_id: agents[agent_id].select_action(
+                torch.tensor(obs_dict[agent_id], dtype=torch.float32)
+            )
             for agent_id in agent_ids
         }
         obs_dict, rewards, dones, trunc, infos = env.step(actions)
@@ -47,20 +49,24 @@ def main():
     config_manager = config.get_default_configs()["quick_test"]
 
     env = PettingZooPayloadEnv(config_manager.environment)
+    print(f"Environment: {env.obs_dim}, {env.action_dim}, {env.num_agents}")
     agents = {}
     for agent_id in env.agents:
         agents[agent_id] = MultiAgentBase(
-            obs_dim=env.obs_dim,
+            obs_dim=env.base_obs_dim,
             action_dim=env.action_dim,
+            max_other_agents=env.n_agents - 1,
+            broadcast_dim=env.broadcast_dim,
+            use_atoc=True,
         )
 
     successes = 0
     for ep in range(args.steps):
         total_reward, infos = run_episode(env, agents, render=True)
-        print(
-            f"Episode {ep+1}: total_reward={total_reward:.3f}, success={info.get('success')}"
-        )
-        if any(infos[i].get("success", False) for i in infos):
+        # Get success from any agent (all share the same episode result)
+        success = any(infos[agent_id].get("success", False) for agent_id in infos)
+        print(f"Episode {ep+1}: total_reward={total_reward:.3f}, success={success}")
+        if success:
             successes += 1
     print(f"Successes: {successes}/{args.steps}")
 
