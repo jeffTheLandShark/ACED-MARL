@@ -106,7 +106,7 @@ def _extract_custom_metrics_from_progress(trial_dir: Path) -> Dict[str, float]:
     return metrics
 
 
-def summarize_trial(trial_dir: Path) -> Dict[str, Any]:
+def summarize_trial(trial_dir: Path, root: Path) -> Dict[str, Any]:
     result_path = trial_dir / "result.json"
     records = _load_records(result_path)
     best, last = _best_and_last(records)
@@ -123,8 +123,16 @@ def summarize_trial(trial_dir: Path) -> Dict[str, Any]:
     csv_metrics = _extract_custom_metrics_from_progress(trial_dir)
     merged_metrics = {**json_metrics, **csv_metrics}
 
+    # Determine a short config/group label relative to the root
+    try:
+        rel_parts = trial_dir.relative_to(root).parts
+        config_label = rel_parts[0] if len(rel_parts) > 1 else "(root)"
+    except ValueError:
+        config_label = trial_dir.parent.name
+
     return {
         "trial": trial_dir.name,
+        "config": config_label,
         "iterations": len(records),
         "best_return_mean": _metric_from_record(best) if best else None,
         "best_iteration": safe_get(best, "training_iteration"),
@@ -144,7 +152,7 @@ def main():
         "root",
         type=Path,
         nargs="?",
-        default=Path("results/quick_test"),
+        default=Path("results/"),
         help="Path to experiment root (contains trial folders).",
     )
     args = parser.parse_args()
@@ -159,29 +167,17 @@ def main():
             print(f"No such directory: {root}")
             return
 
-    trial_dirs = [p for p in root.iterdir() if p.is_dir() and p.name.startswith("PPO_")]
-    if not trial_dirs:
-        # Try one-level deeper (e.g., root/quick_test/PPO_*)
-        nested = []
-        for sub in root.iterdir():
-            if sub.is_dir():
-                nested.extend(
-                    [
-                        p
-                        for p in sub.iterdir()
-                        if p.is_dir() and p.name.startswith("PPO_")
-                    ]
-                )
-        trial_dirs = nested
+    trial_dirs = [p for p in root.rglob("PPO_*") if p.is_dir()]
     if not trial_dirs:
         print(f"No trial directories found under {root}")
         return
 
-    summaries = [summarize_trial(td) for td in sorted(trial_dirs)]
+    summaries = [summarize_trial(td, root) for td in sorted(trial_dirs)]
 
     print("Summary (per trial):")
     for s in summaries:
         print("-" * 80)
+        print(f"config:          {s['config']}")
         print(f"trial:            {s['trial']}")
         print(f"iterations:       {s['iterations']}")
         print(f"best_return_mean: {s['best_return_mean']}")
