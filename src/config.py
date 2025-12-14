@@ -28,6 +28,7 @@ class EnvironmentConfig:
     goal_border_offset: float = 0.1
     placement_radius: float = 0.9
     max_agent_speed: float = 5.0
+    broadcast_dim: int = 64
 
     # Robustness factors
     comm_dropout_prob: float = 0.0
@@ -42,6 +43,7 @@ class AgentConfig:
     agent_type: str = "mappo"  # "mappo" or "mat"
     use_atoc: bool = False
     hidden_dim: int = 128
+    broadcast_dim: int = 64
     thought_dim: int = 64
 
     # MAT-specific
