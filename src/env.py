@@ -416,9 +416,19 @@ class BasePayloadEnv(gym.Env):
 
 class Broadcast:
 
-    def __init__(self, message: np.ndarray = np.zeros(64), delay: int = 0):
-        self.message = message
-        self.message_len = self.message.shape[0]
+    def __init__(
+        self, message: Optional[np.ndarray] = None, delay: int = 0, broadcast_dim: int = 64
+    ):
+        self.message_len = broadcast_dim
+        self.message = (
+            np.zeros(self.message_len, dtype=np.float32)
+            if message is None
+            else np.asarray(message, dtype=np.float32).reshape(-1)[: self.message_len]
+        )
+        if self.message.shape[0] < self.message_len:
+            self.message = np.pad(
+                self.message, (0, self.message_len - self.message.shape[0]), mode="constant"
+            )
         self.delay = delay
         self.age = 0
         self.limit = delay * 2
