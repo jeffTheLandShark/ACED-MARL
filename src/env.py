@@ -5,6 +5,7 @@ from collections import deque
 
 import gymnasium as gym
 import numpy as np
+import torch
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
 from config import EnvironmentConfig
@@ -571,14 +572,20 @@ class PettingZooPayloadEnv(ParallelEnv):
         - Sharing thoughts through the thought buffer
         """
 
-        action_array = [
-            (
-                0
-                if self.env.event_driven and self.env.cooldowns[i] > 0
-                else actions[f"agent_{i}"]["action"]
-            )
-            for i in range(len(self.agents))
-        ]
+        # RLlib may pass plain ints/ndarrays per agent or dicts with an "action" key.
+        def _get_agent_action(a):
+            if isinstance(a, dict) and "action" in a:
+                return a["action"]
+            return a
+
+        action_array = []
+        for i in range(len(self.agents)):
+            agent_key = f"agent_{i}"
+            raw = actions.get(agent_key, 0)
+            act = int(_get_agent_action(raw))
+            if self.env.event_driven and self.env.cooldowns[i] > 0:
+                act = 0
+            action_array.append(act)
 
         # Encode joint action into single integer for base env
         encoded_action = encode(action_array, self.action_dim)
@@ -598,12 +605,28 @@ class PettingZooPayloadEnv(ParallelEnv):
         # Include communication context to observations
         # store broadcasts from agents that selected action 5
         for i, agent_id in enumerate([f"agent_{i}" for i in range(len(self.agents))]):
-            broadcast = (
-                actions[agent_id]["broadcast"] if action_array[i] == 5 else np.zeros(64)
-            )
-            self.broadcast_buffer.store_broadcast(broadcast, agent_id)
-        print("broadcasts", self.broadcast_buffer.buffer)
-        print("obs", obs)
+            # Optional broadcast field only when action==5 and provided
+            raw_broadcast = np.zeros(self.broadcast_dim, dtype=np.float32)
+            if action_array[i] == 5:
+                maybe = actions.get(agent_id)
+                if isinstance(maybe, dict) and "broadcast" in maybe:
+                    raw_broadcast = maybe["broadcast"]
+            # Normalize broadcast to a flat numpy array
+            if isinstance(raw_broadcast, torch.Tensor):
+                broadcast_np = raw_broadcast.detach().cpu().numpy().astype(np.float32)
+            else:
+                broadcast_np = np.asarray(raw_broadcast, dtype=np.float32)
+            broadcast_np = broadcast_np.reshape(-1)  # ensure 1D
+            if broadcast_np.size < self.broadcast_dim:
+                broadcast_np = np.pad(
+                    broadcast_np,
+                    (0, self.broadcast_dim - broadcast_np.size),
+                    mode="constant",
+                )
+            elif broadcast_np.size > self.broadcast_dim:
+                broadcast_np = broadcast_np[: self.broadcast_dim]
+            self.broadcast_buffer.store_broadcast(broadcast_np, agent_id)
+
         observations = {
             f"agent_{i}": np.concatenate(
                 [
