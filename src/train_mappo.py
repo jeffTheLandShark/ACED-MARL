@@ -84,9 +84,7 @@ def create_mappo_config(exp_config: config.ExperimentConfig):
         .training(
             train_batch_size=exp_config.training.train_batch_size,
             minibatch_size=exp_config.training.sgd_minibatch_size,
-            num_epochs=getattr(
-                exp_config.training, "num_epochs", exp_config.training.num_epochs
-            ),
+            num_epochs=exp_config.training.num_epochs,
             lr=exp_config.training.lr,
             gamma=exp_config.training.gamma,
             lambda_=exp_config.training.lambda_,
