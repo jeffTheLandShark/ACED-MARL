@@ -129,14 +129,13 @@ class MultiAgentBase(nn.Module):
         )
 
         # ATOC attention unit (optional)
-        if use_atoc:
-            self.attention_unit = AttentionUnit(hidden_dim, broadcast_dim)
-            # Broadcast generator: creates message content from hidden state
-            self.broadcast_generator = nn.Sequential(
-                nn.Linear(hidden_dim, broadcast_dim), nn.Tanh()
-            )
-            # Fusion layer: combines own hidden state with integrated messages
-            self.fusion_layer = nn.Linear(hidden_dim + broadcast_dim, hidden_dim)
+        self.attention_unit = AttentionUnit(hidden_dim, broadcast_dim)
+        # Broadcast generator: creates message content from hidden state
+        self.broadcast_generator = nn.Sequential(
+            nn.Linear(hidden_dim, broadcast_dim), nn.Tanh()
+        )
+        # Fusion layer: combines own hidden state with integrated messages
+        self.fusion_layer = nn.Linear(hidden_dim + broadcast_dim, hidden_dim)
 
         # Action head (to be used by subclasses)
         self.action_net = nn.Sequential(
@@ -149,15 +148,6 @@ class MultiAgentBase(nn.Module):
         self.value_net = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1)
         )
-
-    def generate_broadcast(self, hidden: torch.Tensor) -> torch.Tensor:
-        """Generate broadcast message vector for communication (action 5 only)."""
-        if not self.use_atoc:
-            # return empty broadcast if ATOC is not used
-            return torch.zeros(
-                (hidden.shape[0], self.broadcast_dim), device=hidden.device
-            )
-        return self.broadcast_generator(hidden)
 
     def decide_communication(
         self, hidden: torch.Tensor, deterministic: bool = False
@@ -174,7 +164,7 @@ class MultiAgentBase(nn.Module):
             gate_probs: (batch_size,) - communication probability
         """
         if not self.use_atoc:
-            # Without ATOC, always communicate (or never, depending on your baseline)
+            # Without ATOC, always communicate
             shape = hidden.shape[:-1]
             return torch.ones(shape, device=hidden.device), torch.ones(
                 shape, device=hidden.device
@@ -208,14 +198,14 @@ class MultiAgentBase(nn.Module):
             fused_hidden: (batch_size, hidden_dim) - hidden state after communication
             attention_weights: (batch_size, n_messages) - attention over messages
         """
-        if not self.use_atoc or broadcasts is None:
+        if broadcasts is None:
             return hidden, torch.zeros_like(broadcasts[:, :, 0])
 
         # Apply mask to broadcasts if provided (zero out invalid messages)
         if valid_mask is not None:
             broadcasts = broadcasts * valid_mask.unsqueeze(-1)
 
-        gate_prob, integrated_broadcast, attention_weights = self.attention_unit(
+        _, integrated_broadcast, attention_weights = self.attention_unit(
             hidden, broadcasts
         )
 
@@ -262,21 +252,16 @@ class MultiAgentBase(nn.Module):
         hidden = self.obs_encoder(base_obs)  # (batch, hidden_dim)
 
         # Generate broadcast message
-        agent_broadcast = torch.zeros(
-            (batch_size, self.broadcast_dim), device=hidden.device
-        )
-        if self.use_atoc:
-            agent_broadcast = self.generate_broadcast(hidden)
+        agent_broadcast = self.broadcast_generator(hidden)
 
         # Integrate received broadcasts
         attention_weights = torch.zeros(
             batch_size, self.max_other_agents, device=hidden.device
         )
-        if self.use_atoc:
-            fused_hidden, attention_weights = self.integrate_communication(
-                hidden, broadcast
-            )
-            hidden = fused_hidden
+        fused_hidden, attention_weights = self.integrate_communication(
+            hidden, broadcast
+        )
+        hidden = fused_hidden
 
         # Decide whether to communicate
         comm_decision, comm_prob = self.decide_communication(hidden, deterministic)
@@ -301,18 +286,6 @@ class MultiAgentBase(nn.Module):
             "comm_prob": comm_prob,
             "attention_weights": attention_weights,
         }
-
-    def compute_comm_penalty(self, comm_decisions: torch.Tensor) -> torch.Tensor:
-        """
-        Compute penalty for communication to encourage sparse messaging.
-
-        Args:
-            comm_decisions: (batch_size,) - binary communication decisions
-
-        Returns:
-            penalty: (batch_size,) - communication penalty
-        """
-        return self.comm_penalty * comm_decisions
 
     def get_action_distribution(self, action_logits: torch.Tensor):
         """Get categorical distribution over actions."""
