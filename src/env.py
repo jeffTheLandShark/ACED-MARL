@@ -261,6 +261,34 @@ class BasePayloadEnv(gym.Env):
         # Ensure observations are float32 (Gym expects float32 by default)
         return obs.astype(np.float32, copy=False)
 
+    def _reward(self) -> np.ndarray:
+        """Compute reward based on environment state and info."""
+        dist_to_goal = np.linalg.norm(self.goal - self.payload_pos)
+        base_reward = -dist_to_goal  # Negative distance to goal
+
+        # Penalty for lost contact
+        agents_in_contact = (
+            np.linalg.norm(self.agents_pos - self.payload_pos, axis=1)
+            <= self.contact_radius
+        )
+        contact_fraction = agents_in_contact.sum() / self.n_agents
+        base_reward -= (1.0 - contact_fraction) * 5.0
+
+        # Success: payload reaches goal
+        if dist_to_goal < self.goal_radius:
+            base_reward += 100.0
+
+        # Failure: too many agents lost contact
+        if contact_fraction < 0.5:
+            base_reward -= 10.0
+
+        rewards = np.full(self.n_agents, base_reward, dtype=np.float32)
+        # add reward to agents that are in contact with the payload
+        rewards[agents_in_contact] += 1.0
+        # add reward to agents that are in contact with the goal
+        rewards[agents_in_contact] += 1.0
+        return rewards
+
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """Execute one environment step."""
         self.step_count += 1
@@ -331,35 +359,16 @@ class BasePayloadEnv(gym.Env):
                 self.cooldowns[i] = max(0, self.cooldowns[i] - 1)
 
         # Compute reward
-        dist_to_goal_after = np.linalg.norm(self.goal - self.payload_pos)
-        base_reward = dist_to_goal_before - dist_to_goal_after
-        rewards = np.full(self.n_agents, base_reward)
-
-        # Penalty for lost contact
-        rewards -= (1.0 - agents_in_contact) * 5.0
+        dist_to_goal_after = float(np.linalg.norm(self.goal - self.payload_pos))
         contact_fraction = agents_in_contact.sum() / self.n_agents
+        rewards = self._reward()
 
         # Check termination conditions
-        done = False
-        success = False
-
-        # Success: payload reaches goal
-        if dist_to_goal_after < self.goal_radius:
-            rewards += 100.0
-            done = True
-            success = True
-
-        # Failure: too many agents lost contact
-        if contact_fraction < 0.5:
-            rewards -= 10.0
-            done = True
-            success = False
-
-        # Max steps
-        if self.step_count >= self.max_steps:
-            done = True
-
-        obs = self._get_obs()
+        reached_goal = dist_to_goal_after < self.goal_radius
+        dropped_contact = contact_fraction < 0.5
+        max_steps_reached = self.step_count >= self.max_steps
+        done: bool = reached_goal or dropped_contact or max_steps_reached
+        success = reached_goal and not dropped_contact
 
         # Compute metrics
         contact_fractions = [
@@ -378,7 +387,7 @@ class BasePayloadEnv(gym.Env):
 
         # Return mean reward as single float value
         mean_reward = float(np.mean(rewards))
-        return obs, mean_reward, done, False, info
+        return self._get_obs(), mean_reward, done, False, info
 
     def render(self, mode: str = "human"):
         """ASCII render of environment state."""
