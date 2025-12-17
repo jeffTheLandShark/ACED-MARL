@@ -75,30 +75,39 @@ class BasePayloadEnv(gym.Env):
         contact_radius: float = 2.0,
         placement_radius: float = 0.9,
         max_agent_speed: float = 5.0,
+        decay_factor: float = 0.9,
     ):
         super().__init__()
+        self.n_agents = n_agents
+        self.arena_size = arena_size
+        self.goal_radius = goal_radius
+        self.goal_border_offset = goal_border_offset
+        self.max_steps = max_steps
+        self.event_driven = event_driven
+        self.cooldown_time = cooldown_time
+        self.contact_radius = contact_radius
+        self.placement_radius = placement_radius
+        self.max_agent_speed = max_agent_speed
+        self.decay_factor = decay_factor
+
+        self.group_reward_weights = [
+            5.0,  # r_dist
+            5.0,  # r_contact
+            -10.0,  # r_contact_fail
+            100.0,  # r_success
+        ]
+
+        self.payload_reward = 5.0
+
         if config is not None:
             self.__dict__.update(config.__dict__)
-        else:
-            self.n_agents = n_agents
-            self.arena_size = arena_size
-            self.goal_radius = goal_radius
-            self.goal_border_offset = goal_border_offset
-            self.max_steps = max_steps
-            self.event_driven = event_driven
-            self.cooldown_time = cooldown_time
-            self.contact_radius = contact_radius
-            self.placement_radius = placement_radius
-            self.max_agent_speed = max_agent_speed
 
-        # observation: [vx, vy, dist_payload, dist_goal, msg_vx, msg_vy,
-        #               msg_dist_payload, msg_dist_goal, msg_age, cooldown]
+        # observation: [vx, vy, dist_payload, dist_goal, cooldown]
         self.obs_dim = 5
         self.action_dim = 6
         # Use realistic bounds based on arena size and max speed
         # Velocities: [-max_speed*1.5, max_speed*1.5] for safety margin
         # Distances: [0, arena_size*sqrt(2)] for diagonal distance
-        # Message age: [0, max_steps] upper bound
         # Cooldown: [0, cooldown_time] upper bound
         max_distance = self.arena_size * math.sqrt(2)
         low = np.array(
@@ -236,7 +245,7 @@ class BasePayloadEnv(gym.Env):
         obs = self._get_obs()
         return obs, {}
 
-    def _get_obs(self):
+    def _get_obs(self) -> np.ndarray:
         """
         Observation per agent (partial observability):
         [vx, vy, dist_payload, dist_goal, cooldown, broadcasts]
@@ -264,29 +273,29 @@ class BasePayloadEnv(gym.Env):
     def _reward(self) -> np.ndarray:
         """Compute reward based on environment state and info."""
         dist_to_goal = np.linalg.norm(self.goal - self.payload_pos)
-        base_reward = -dist_to_goal  # Negative distance to goal
 
-        # Penalty for lost contact
         agents_in_contact = (
             np.linalg.norm(self.agents_pos - self.payload_pos, axis=1)
             <= self.contact_radius
         )
-        contact_fraction = agents_in_contact.sum() / self.n_agents
-        base_reward -= (1.0 - contact_fraction) * 5.0
+        agents_contacting = agents_in_contact.sum()
 
-        # Success: payload reaches goal
-        if dist_to_goal < self.goal_radius:
-            base_reward += 100.0
+        group_rewards = [
+            1 - dist_to_goal / self.arena_size,  # r_dist
+            agents_contacting / self.n_agents,  # r_contact
+            agents_contacting < 2,  # r_contact_fail
+            dist_to_goal < self.goal_radius,  # r_success
+        ]
 
-        # Failure: too many agents lost contact
-        if contact_fraction < 0.5:
-            base_reward -= 10.0
+        rewards = np.full(
+            self.n_agents,
+            np.dot(self.group_reward_weights, group_rewards),
+            dtype=np.float32,
+        )
 
-        rewards = np.full(self.n_agents, base_reward, dtype=np.float32)
         # add reward to agents that are in contact with the payload
-        rewards[agents_in_contact] += 1.0
-        # add reward to agents that are in contact with the goal
-        rewards[agents_in_contact] += 1.0
+        rewards[agents_in_contact] += self.payload_reward
+        rewards *= self.decay_factor ** (self.step_count / self.max_steps)
         return rewards
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
@@ -343,13 +352,7 @@ class BasePayloadEnv(gym.Env):
             if agents_in_contact[i]:
                 self.total_contact_time[i] += 1
 
-        dist_to_goal_before = np.linalg.norm(self.goal - self.payload_pos)
-
-        if agents_in_contact.sum() > 0:
-            self.payload_vel = np.mean(self.agents_vel[agents_in_contact], axis=0)
-        else:
-            self.payload_vel *= 0.9  # decay if no contact
-
+        self.payload_vel = np.mean(self.agents_vel[agents_in_contact], axis=0)
         self.payload_pos += self.payload_vel
         self.payload_pos = np.clip(self.payload_pos, 0.0, self.arena_size)
 
@@ -358,17 +361,16 @@ class BasePayloadEnv(gym.Env):
             if self.cooldowns[i] > 0:
                 self.cooldowns[i] = max(0, self.cooldowns[i] - 1)
 
-        # Compute reward
+        # Compute rewards
         dist_to_goal_after = float(np.linalg.norm(self.goal - self.payload_pos))
         contact_fraction = agents_in_contact.sum() / self.n_agents
-        rewards = self._reward()
-
         # Check termination conditions
         reached_goal = dist_to_goal_after < self.goal_radius
         dropped_contact = contact_fraction < 0.5
         max_steps_reached = self.step_count >= self.max_steps
         done: bool = reached_goal or dropped_contact or max_steps_reached
         success = reached_goal and not dropped_contact
+        rewards = self._reward()
 
         # Compute metrics
         contact_fractions = [
@@ -377,8 +379,6 @@ class BasePayloadEnv(gym.Env):
 
         info = {
             "success": success,
-            "payload_pos": self.payload_pos.copy(),
-            "agents_pos": self.agents_pos.copy(),
             "contact_fraction": contact_fraction,
             "avg_contact_fraction": np.mean(contact_fractions),
             "dist_to_goal": dist_to_goal_after,
