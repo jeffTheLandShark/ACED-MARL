@@ -636,29 +636,7 @@ class PettingZooPayloadEnv(ParallelEnv):
                 broadcast_np = broadcast_np[: self.broadcast_dim]
             self.broadcast_buffer.store_broadcast(broadcast_np, agent_id)
 
-        observations = {
-            f"agent_{i}": np.concatenate(
-                [
-                    obs[i],
-                    np.concatenate(
-                        (
-                            lambda broadcasts: broadcasts
-                            + [
-                                np.zeros(self.broadcast_dim, dtype=np.float32)
-                                for _ in range(
-                                    max(self.n_agents - 1, 0) - len(broadcasts)
-                                )
-                            ]
-                        )(self.broadcast_buffer.get_broadcasts(f"agent_{i}")),
-                        dtype=np.float32,
-                    ),
-                ],
-                dtype=np.float32,
-            )
-            for i in range(len(self.agents))
-        }
-
-        return observations, rewards, terminations, truncations, infos
+        return self._obs(), rewards, terminations, truncations, infos
 
     def state(self) -> np.ndarray:
         """Get the current state of the environment."""
