@@ -68,6 +68,7 @@ class TrainingConfig:
     train_batch_size: int = 4000
     sgd_minibatch_size: int = 128
     num_epochs: int = 20
+    iterations: int = 1000
 
     # Learning rates
     lr: float = 3e-4

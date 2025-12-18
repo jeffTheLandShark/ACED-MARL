@@ -194,6 +194,7 @@ def main():
     # Run training
     stop_criteria = {
         "num_env_steps_sampled_lifetime": exp_config.training.total_timesteps,
+        "training_iteration": exp_config.training.iterations,
     }
 
     checkpoint_config = tune.CheckpointConfig(

@@ -26,9 +26,10 @@ training:
   gamma: 0.99
   lambda: 0.95
   entropy_coeff: 0.01
-  num_epochs: 20
+  num_epochs: 15
   total_steps: 1_000_000
   checkpoint_freq: 10000
+  iterations: 200
 
 checkpoint:
   save_dir: results/checkpoints
