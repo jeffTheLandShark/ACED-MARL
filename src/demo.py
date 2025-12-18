@@ -38,12 +38,18 @@ def run_episode(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--event", action="store_true", help="Run in event-driven (asynchronous) mode"
-    )
+
     parser.add_argument(
         "--steps", type=int, default=5, help="Number of episodes to run"
     )
+
+    parser.add_argument(
+        "--render-mode",
+        type=bool,
+        default=False,
+        help="Whether to render the environment",
+    )
+
     args = parser.parse_args()
 
     config_manager = config.get_default_configs()["quick_test"]
@@ -62,7 +68,7 @@ def main():
 
     successes = 0
     for ep in range(args.steps):
-        total_reward, infos = run_episode(env, agents, render=True)
+        total_reward, infos = run_episode(env, agents, render=args.render_mode)
         # Get success from any agent (all share the same episode result)
         success = any(infos[agent_id].get("success", False) for agent_id in infos)
         print(f"Episode {ep+1}: total_reward={total_reward:.3f}, success={success}")
