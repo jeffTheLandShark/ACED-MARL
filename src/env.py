@@ -91,13 +91,18 @@ class BasePayloadEnv(gym.Env):
         self.decay_factor = decay_factor
 
         self.group_reward_weights = [
-            5.0,  # r_dist
-            5.0,  # r_contact
+            0.5,  # r_dist
+            0.5,  # r_contact
             -10.0,  # r_contact_fail
-            100.0,  # r_success
+            10.0,  # r_success
         ]
 
-        self.payload_reward = 5.0
+        self.idv_reward_weights = [
+            5.0,  # payload reward
+            -1.0,  # distance to goal
+        ]
+
+        self.payload_reward = 1.0
 
         if config is not None:
             self.__dict__.update(config.__dict__)
@@ -293,8 +298,11 @@ class BasePayloadEnv(gym.Env):
             dtype=np.float32,
         )
 
-        # add reward to agents that are in contact with the payload
-        rewards[agents_in_contact] += self.payload_reward
+        agents_dist_to_goal = np.linalg.norm(self.agents_pos - self.goal, axis=1)
+        
+        agent_rewards = [agents_in_contact, agents_dist_to_goal / self.arena_size]
+        rewards += np.dot(self.idv_reward_weights, agent_rewards)
+
         rewards *= self.decay_factor ** (self.step_count / self.max_steps)
         return rewards
 
@@ -352,7 +360,14 @@ class BasePayloadEnv(gym.Env):
             if agents_in_contact[i]:
                 self.total_contact_time[i] += 1
 
-        self.payload_vel = np.mean(self.agents_vel[agents_in_contact], axis=0)
+        if agents_in_contact.sum() > 0:
+            self.payload_vel = (
+                (np.mean(self.agents_vel[agents_in_contact], axis=0) * 0.75)
+                + (self.payload_vel * 0.25)
+            ) / 2.0
+        else:
+            self.payload_vel *= 0.9
+
         self.payload_pos += self.payload_vel
         self.payload_pos = np.clip(self.payload_pos, 0.0, self.arena_size)
 
@@ -547,20 +562,28 @@ class PettingZooPayloadEnv(ParallelEnv):
             agent: spaces.Discrete(self.action_dim) for agent in self.possible_agents
         }
 
-    def reset(self, seed=None, options=None):
-        """Reset and return {agent: obs} dict."""
-        obs, _ = self.env.reset(seed=seed, options=options)
-        self.agents = self.possible_agents[:]
+    def observation_space(self, agent):
+        return self.observation_spaces[agent]
 
-        # Reset broadcast buffer
-        self.broadcast_buffer = BroadcastBuffer(broadcast_dim=self.broadcast_dim)
+    def action_space(self, agent):
+        return self.action_spaces[agent]
 
+    def _obs(self):
+        obs = self.env._get_obs()
         observations = {
             f"agent_{i}": np.concatenate(
                 [
                     obs[i],
-                    np.zeros(
-                        self.broadcast_dim * max(self.n_agents - 1, 0),
+                    np.concatenate(
+                        (
+                            lambda broadcasts: broadcasts
+                            + [
+                                np.zeros(self.broadcast_dim, dtype=np.float32)
+                                for _ in range(
+                                    max(self.n_agents - 1, 0) - len(broadcasts)
+                                )
+                            ]
+                        )(self.broadcast_buffer.get_broadcasts(f"agent_{i}")),
                         dtype=np.float32,
                     ),
                 ],
@@ -568,9 +591,17 @@ class PettingZooPayloadEnv(ParallelEnv):
             )
             for i in range(len(self.agents))
         }
-        infos = {agent: {} for agent in self.agents}
+        return observations
 
-        return observations, infos
+    def reset(self, seed=None, options=None):
+        """Reset and return {agent: obs} dict."""
+        self.agents = self.possible_agents[:]
+        # Reset base environment
+        self.env.reset(seed=seed, options=options)
+        # Reset broadcast buffer
+        self.broadcast_buffer = BroadcastBuffer(broadcast_dim=self.broadcast_dim)
+
+        return self._obs(), {agent: {} for agent in self.agents}
 
     def step(self, actions: dict) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
         """Step with {agent: action} dict.
@@ -635,8 +666,13 @@ class PettingZooPayloadEnv(ParallelEnv):
             elif broadcast_np.size > self.broadcast_dim:
                 broadcast_np = broadcast_np[: self.broadcast_dim]
             self.broadcast_buffer.store_broadcast(broadcast_np, agent_id)
+        obs = self._obs()
 
-        return self._obs(), rewards, terminations, truncations, infos
+        if done or truncated:
+            # Reset environment when done/truncated
+            self.reset()
+
+        return obs, rewards, terminations, truncations, infos
 
     def state(self) -> np.ndarray:
         """Get the current state of the environment."""
