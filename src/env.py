@@ -94,11 +94,11 @@ class BasePayloadEnv(gym.Env):
             0.5,  # r_dist
             0.5,  # r_contact
             -10.0,  # r_contact_fail
-            10.0,  # r_success
+            50.0,  # r_success
         ]
 
         self.idv_reward_weights = [
-            5.0,  # payload reward
+            1.0,  # payload reward
             -1.0,  # distance to goal
         ]
 
@@ -299,7 +299,7 @@ class BasePayloadEnv(gym.Env):
         )
 
         agents_dist_to_goal = np.linalg.norm(self.agents_pos - self.goal, axis=1)
-        
+
         agent_rewards = [agents_in_contact, agents_dist_to_goal / self.arena_size]
         rewards += np.dot(self.idv_reward_weights, agent_rewards)
 
