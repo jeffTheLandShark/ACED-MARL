@@ -77,7 +77,7 @@ agent:                            # Agent architecture
   agent_type: mappo|mat           # Policy network type
   use_atoc: true|false            # Enable communication
   hidden_dim: 128                 # Network hidden layer size
-  thought_dim: 64                 # Communication embedding dim
+  broadcast_dim: 64                 # Communication embedding dim
   n_heads: 4                      # (MAT only) Attention heads
   n_layers: 2                     # (MAT only) Transformer layers
 
