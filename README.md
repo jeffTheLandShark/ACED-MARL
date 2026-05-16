@@ -27,12 +27,8 @@ The core objective is to analyze the impact of asynchronous and event-triggered 
 |---------------------------|---------------|
 | Synchronous MAPPO         | Step-based    |
 | Synchronous MAPPO + ATOC  | Step-based    |
-| Synchronous MAT           | Step-based    |
-| Synchronous MAT + ATOC    | Step-based    |
 | Asynchronous MAPPO        | Event-driven  |
-| Asynchronous MAT          | Event-driven  |
 | Asynchronous MAPPO + ATOC | Event-driven  |
-| Asynchronous MAT + ATOC   | Event-driven  |
 
 
 
